@@ -32,6 +32,7 @@ class TestCTFPayloadGenerationRealScenarios:
         
         # Simulate shop.post.ch encoding profile
         input_data = CTFPayloadGeneratorInput(
+            scan_id="scan_test_001",
             url="https://shop.post.ch/search",
             parameter="q",
             context="script_string_double",
@@ -76,6 +77,7 @@ class TestCTFPayloadGenerationRealScenarios:
         specialist = CTFPayloadGeneratorSpecialist()
         
         input_data = CTFPayloadGeneratorInput(
+            scan_id="scan_test_002",
             url="http://example.com/search",
             parameter="q",
             context="html_attribute",
@@ -112,9 +114,8 @@ class TestCTFPayloadGenerationRealScenarios:
         This tests the LLM's ability to find novel solutions when standard
         payload characters are blocked.
         """
-        specialist = CTFPayloadGeneratorSpecialist()
-        
         input_data = CTFPayloadGeneratorInput(
+            scan_id="scan_test_003",
             url="http://ctf.example.com/search",
             parameter="input",
             context="script_expression",
@@ -123,8 +124,6 @@ class TestCTFPayloadGenerationRealScenarios:
             stripped_chars=['!', '@', '#', '$', '%', '^', '&', '*'],
             max_candidates=3,
         )
-        
-        prompt = specialist.build_prompt(input_data)
         
         # Verify it acknowledges the constraints
         assert len(input_data.raw_chars) < 15, "This should be a TIGHT filter"

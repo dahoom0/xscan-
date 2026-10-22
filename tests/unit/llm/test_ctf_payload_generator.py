@@ -25,6 +25,7 @@ class TestCTFPayloadGenerator:
         
         # Scenario: html_attribute with double quote available
         input_data = CTFPayloadGeneratorInput(
+            scan_id="test_001",
             url="http://example.com/page?search=test",
             parameter="search",
             context="html_attribute",
@@ -53,6 +54,7 @@ class TestCTFPayloadGenerator:
         
         # Scenario: script_string_double with semicolon available (like shop.post.ch)
         input_data = CTFPayloadGeneratorInput(
+            scan_id="test_002",
             url="http://example.com/api/search",
             parameter="q",
             context="script_string_double",
@@ -77,6 +79,7 @@ class TestCTFPayloadGenerator:
         # Different contexts should get different rules
         for context in ["html_attribute", "script_string_double", "html_text", "unknown"]:
             input_data = CTFPayloadGeneratorInput(
+                scan_id=f"test_ctx_{context}",
                 url="http://test.com/search",
                 parameter="q",
                 context=context,
@@ -85,8 +88,8 @@ class TestCTFPayloadGenerator:
                 stripped_chars=[],
             )
             
-            prompt = specialist.build_prompt(input_data)
-            assert context in prompt or "Context" in prompt, f"Prompt should reference context: {context}"
+            prompt_text = specialist.build_prompt(input_data)
+            assert context in prompt_text or "Context" in prompt_text, f"Prompt should reference context: {context}"
 
     def test_no_impossible_payloads(self):
         """Test that specialist doesn't generate payloads using encoded/stripped chars."""
@@ -94,6 +97,7 @@ class TestCTFPayloadGenerator:
         
         # Scenario: very restricted filter (only alphanumeric + semicolon)
         input_data = CTFPayloadGeneratorInput(
+            scan_id="test_restricted",
             url="http://example.com/test",
             parameter="input",
             context="script_expression",
@@ -106,7 +110,6 @@ class TestCTFPayloadGenerator:
         output = specialist.run(input_data)
         
         # All payloads must use only raw_chars
-        raw_set = set(input_data.raw_chars)
         encoded_set = set(input_data.encoded_chars)
         stripped_set = set(input_data.stripped_chars)
         
@@ -145,6 +148,7 @@ class TestCTFPayloadGenerator:
         specialist = CTFPayloadGeneratorSpecialist()
         
         input_data = CTFPayloadGeneratorInput(
+            scan_id="test_prev",
             url="http://example.com/test",
             parameter="search",
             context="html_attribute",
