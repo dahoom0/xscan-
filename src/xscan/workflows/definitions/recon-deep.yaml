@@ -1,0 +1,101 @@
+name: recon-deep
+version: "1.2"
+description: >
+  Deep recon: subdomain enum (subfinder + assetfinder + amass),
+  HTTP probing, technology detection, directory discovery, endpoint inventory, screenshots.
+
+inputs:
+  target_url:
+    type: str
+    required: true
+
+nodes:
+  - id: tool-health
+    type: tool-health
+    depends_on: []
+    timeout: 30
+    config:
+      required_tools: [subfinder, assetfinder, httpx]
+      optional_tools: [amass, ffuf, gowitness, nuclei]
+
+  - id: scope-validation
+    type: scope-check
+    depends_on: [tool-health]
+    timeout: 10
+
+  # Technology detection runs first, in parallel with subdomain enum
+  - id: recon
+    type: technology-detect
+    depends_on: [scope-validation]
+    timeout: 60
+
+  # Subdomain enumeration (all three tools, active)
+  - id: subdomain-enum
+    type: subdomain-enum
+    depends_on: [scope-validation]
+    timeout: 600
+    config:
+      tools: [subfinder, assetfinder, amass]
+      passive_only: false
+
+  # Deduplicate + scope-classify discovered assets
+  - id: asset-fusion
+    type: asset-fusion
+    depends_on: [subdomain-enum]
+    timeout: 30
+
+  # Probe all live assets over HTTP/S
+  - id: http-probe
+    type: http-probe
+    depends_on: [asset-fusion]
+    timeout: 300
+    config:
+      timeout: 10
+      max_hosts: 200
+
+  # Capture screenshots of live hosts with gowitness
+  - id: screenshot-capture
+    type: screenshot-capture
+    depends_on: [http-probe]
+    timeout: 180
+    config:
+      screenshot_enabled: true
+      screenshot_timeout: 15
+      screenshot_max_hosts: 20
+
+  # Merge all discovered URLs into canonical Endpoint objects
+  - id: endpoint-inventory
+    type: endpoint-inventory
+    depends_on: [http-probe]
+    timeout: 60
+
+  # Directory/path discovery with ffuf as fallback
+  # (only runs if endpoint_count == 0)
+  - id: directory-discovery
+    type: directory-discovery
+    depends_on: [endpoint-inventory]
+    timeout: 600
+    config:
+      max_hosts: 20
+      max_requests: 500
+      rate_limit: 30
+      extensions: [php, asp, aspx, html, js, json, txt, bak]
+      skip_if_endpoints: true
+
+  # Nuclei vulnerability scanning on discovered endpoints
+  - id: nuclei-vuln
+    type: nuclei-vuln
+    depends_on: [endpoint-inventory]
+    timeout: 900
+    config:
+      enabled: true
+      tags: [cve, misconfiguration, exposure, panel]
+      severity: [critical, high, medium]
+      rate_limit: 5
+
+  - id: report
+    type: report
+    depends_on: [recon, nuclei-vuln]
+    timeout: 60
+    config:
+      format: terminal

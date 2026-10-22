@@ -1,0 +1,1 @@
+"""XScan CLI — command registry."""

@@ -1,0 +1,237 @@
+# XSS Sink Registry
+# Each sink is a browser API that can execute attacker-controlled data.
+#
+# severity: critical | high | medium | low
+# category: html_injection | js_execution | url_sink | dom_property | framework_bypass
+# requires_browser: true if verification needs a real browser (vs HTTP-only)
+# kind: what the sink does with its input — drives payload selection
+#   url_attribute | html_attribute | event_handler | html_text |
+#   js_execution | selector | navigation
+# interaction: how a browser must trigger the sink — drives confirmation
+#   none | click | event | submit
+# notes: guidance for test planning
+
+sinks:
+
+  # ── Direct HTML injection ──────────────────────────────────────────────────
+  - id: inner_html
+    label: "innerHTML"
+    pattern: "\\.innerHTML\\s*="
+    severity: critical
+    category: html_injection
+    requires_browser: true
+
+  - id: outer_html
+    label: "outerHTML"
+    pattern: "\\.outerHTML\\s*="
+    severity: critical
+    category: html_injection
+    requires_browser: true
+
+  - id: insert_adjacent_html
+    label: "insertAdjacentHTML()"
+    pattern: "\\.insertAdjacentHTML\\("
+    severity: critical
+    category: html_injection
+    requires_browser: true
+
+  - id: document_write
+    label: "document.write()"
+    pattern: "document\\.write\\("
+    severity: critical
+    category: html_injection
+    requires_browser: false
+    notes: "Can sometimes be detected server-side if page reloads"
+
+  - id: document_writeln
+    label: "document.writeln()"
+    pattern: "document\\.writeln\\("
+    severity: critical
+    category: html_injection
+    requires_browser: false
+
+  # ── JavaScript execution ───────────────────────────────────────────────────
+  - id: eval
+    label: "eval()"
+    pattern: "\\beval\\s*\\("
+    severity: critical
+    category: js_execution
+    requires_browser: false
+
+  - id: function_constructor
+    label: "Function()"
+    pattern: "\\bnew\\s+Function\\s*\\("
+    severity: critical
+    category: js_execution
+    requires_browser: false
+    notes: "Only dynamic Function() constructor — not function declarations"
+
+  - id: function_str
+    label: "Function(str)"
+    pattern: "(?<!\\bfunction\\s)(?<!\\w)Function\\s*\\(\\s*['\"`]"
+    severity: critical
+    category: js_execution
+    requires_browser: false
+
+  - id: settimeout_str
+    label: "setTimeout(str)"
+    pattern: "setTimeout\\s*\\(\\s*['\"`]"
+    severity: high
+    category: js_execution
+    requires_browser: false
+
+  - id: setinterval_str
+    label: "setInterval(str)"
+    pattern: "setInterval\\s*\\(\\s*['\"`]"
+    severity: high
+    category: js_execution
+    requires_browser: false
+
+  # ── jQuery HTML APIs ───────────────────────────────────────────────────────
+  - id: jquery_dollar
+    label: "jQuery $()"
+    pattern: "\\$\\s*\\("
+    severity: high
+    category: html_injection
+    kind: selector
+    interaction: none
+    requires_browser: true
+    notes: "jQuery selector injection — depends on jQuery version and selector context"
+
+  - id: jquery_html
+    label: "jQuery .html()"
+    pattern: "\\$\\w*\\.html\\("
+    severity: high
+    category: html_injection
+    requires_browser: true
+
+  # ── URL / navigation sinks ─────────────────────────────────────────────────
+  - id: element_href
+    label: "element.href"
+    pattern: "\\.[\\s]*href\\s*="
+    severity: high
+    category: url_sink
+    requires_browser: true
+    notes: "javascript: URI is the exploit vector"
+
+  - id: element_src
+    label: "element.src"
+    pattern: "\\.[\\s]*src\\s*="
+    severity: high
+    category: url_sink
+    requires_browser: true
+
+  - id: location_assign
+    label: "location.assign()"
+    pattern: "location\\.assign\\("
+    severity: high
+    category: url_sink
+    requires_browser: true
+
+  - id: location_replace
+    label: "location.replace()"
+    pattern: "location\\.replace\\("
+    severity: high
+    category: url_sink
+    requires_browser: true
+
+  - id: set_attribute_on
+    label: "setAttribute(on*)"
+    pattern: "\\.setAttribute\\s*\\(\\s*['\"]on"
+    severity: medium
+    category: html_injection
+    kind: event_handler
+    interaction: event
+    requires_browser: true
+
+  # ── Angular-specific dangerous sinks ──────────────────────────────────────
+  - id: bypass_trust_html
+    label: "bypassSecurityTrustHtml()"
+    pattern: "bypassSecurityTrustHtml\\s*\\("
+    severity: critical
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+    notes: "Disables Angular's built-in HTML sanitizer — any user data reaching this is exploitable"
+
+  - id: bypass_trust_script
+    label: "bypassSecurityTrustScript()"
+    pattern: "bypassSecurityTrustScript\\s*\\("
+    severity: critical
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+
+  - id: bypass_trust_url
+    label: "bypassSecurityTrustUrl()"
+    pattern: "bypassSecurityTrustUrl\\s*\\("
+    severity: high
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+    notes: "Enables javascript: URIs in href/src — exploitable via link click"
+
+  - id: bypass_trust_resource_url
+    label: "bypassSecurityTrustResourceUrl()"
+    pattern: "bypassSecurityTrustResourceUrl\\s*\\("
+    severity: high
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+
+  - id: bypass_trust_style
+    label: "bypassSecurityTrustStyle()"
+    pattern: "bypassSecurityTrustStyle\\s*\\("
+    severity: medium
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+
+  - id: element_ref_inner_html
+    label: "ElementRef.innerHTML"
+    pattern: "nativeElement\\s*\\.\\s*innerHTML\\s*="
+    severity: critical
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+    notes: "Direct DOM access bypasses Angular's change detection and sanitization"
+
+  - id: element_ref_outer_html
+    label: "ElementRef.outerHTML"
+    pattern: "nativeElement\\s*\\.\\s*outerHTML\\s*="
+    severity: critical
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+
+  - id: renderer2_inner_html
+    label: "Renderer2.setProperty(innerHTML)"
+    pattern: "renderer\\.setProperty\\s*\\([^,]+,\\s*['\"]innerHTML['\"]"
+    severity: critical
+    category: framework_bypass
+    framework: Angular
+    requires_browser: true
+
+  # ── Attribute sinks ───────────────────────────────────────────────────────
+  # .attr() and setAttribute() write to an arbitrary attribute. The attribute
+  # name is what decides the exploit: href/src/action need a javascript: URI and
+  # a click, on* attributes need a JS payload plus the event to fire.
+  - id: jquery_attr
+    label: "jQuery .attr()"
+    pattern: "\\.attr\\s*\\(\\s*['\"][\\w-]+['\"]"
+    severity: high
+    category: framework
+    kind: html_attribute
+    interaction: click
+    requires_browser: true
+    notes: "Attribute is resolved at match time — href/src/action become url_attribute sinks needing javascript: and a click"
+
+  - id: set_attribute_url
+    label: "setAttribute(url)"
+    pattern: "\\.setAttribute\\s*\\(\\s*['\"](?:href|src|action|formaction|xlink:href)['\"]"
+    severity: high
+    category: url_sink
+    kind: url_attribute
+    interaction: click
+    requires_browser: true
+    notes: "javascript: URI is the exploit vector; execution needs a click or navigation"

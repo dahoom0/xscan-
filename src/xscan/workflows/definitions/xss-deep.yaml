@@ -1,0 +1,166 @@
+name: xss-deep
+version: "2.1"
+description: >
+  Deep XSS analysis with full recon, JS taint graph, LLM context specialist,
+  and iterative validation.
+  Source → context → transformation → data-flow → sink →
+  candidate → LLM interpretation → bounded test plan →
+  policy → validation → evidence → finding.
+
+inputs:
+  target_url:
+    type: str
+    required: true
+
+nodes:
+  # ── Scope validation ────────────────────────────────────────────────
+  - id: scope-validation
+    type: scope-check
+    depends_on: []
+    timeout: 10
+
+  # ── Recon: technology + passive subdomain enum + HTTP probe ─────────
+  - id: recon
+    type: technology-detect
+    depends_on: [scope-validation]
+    timeout: 60
+
+  - id: subdomain-enum
+    type: subdomain-enum
+    depends_on: [scope-validation]
+    timeout: 300
+    config:
+      tools: [subfinder, assetfinder, amass]
+      passive_only: false
+
+  - id: asset-fusion
+    type: asset-fusion
+    depends_on: [subdomain-enum]
+    timeout: 20
+
+  - id: http-probe
+    type: http-probe
+    depends_on: [asset-fusion]
+    timeout: 300
+    config:
+      timeout: 10
+      max_hosts: 100
+
+  - id: endpoint-inventory
+    type: endpoint-inventory
+    depends_on: [http-probe]
+    timeout: 30
+
+  # ── Crawl: seeded with recon endpoint_urls ───────────────────────────
+  - id: crawl
+    type: crawler
+    depends_on: [recon, endpoint-inventory]
+    timeout: 600
+    config:
+      max_pages: 150
+      max_depth: 5
+
+  # ── Parallel analysis ────────────────────────────────────────────────
+  # Depends on dom-xss-detect so XHR/fetch endpoints discovered in the page's
+  # JS (which feed DOM sinks) can be probed for reflection too.
+  - id: candidate-gen
+    type: candidate-generator
+    depends_on: [crawl, dom-xss-detect]
+    timeout: 600
+    config:
+      max_candidates: 50
+
+  - id: js-extract
+    type: js-extractor
+    depends_on: [crawl]
+    timeout: 300
+    config:
+      max_files: 50
+
+  - id: stored-xss-detect
+    type: stored-xss-detector
+    depends_on: [crawl]
+    timeout: 300
+
+  # ── DOM XSS — sink-resolved static detection (attribute sinks, params) ─
+  - id: dom-xss-detect
+    type: dom-xss-detector
+    depends_on: [crawl]
+    timeout: 180
+
+  # ── AST + DOM taint analysis ─────────────────────────────────────────
+  - id: ast-parse
+    type: ast-parser
+    depends_on: [js-extract]
+    timeout: 300
+
+  - id: dom-source-sink-event
+    type: dom-source-sink-event
+    depends_on: [js-extract]
+    timeout: 180
+
+  - id: taint-graph
+    type: taint-graph-builder
+    depends_on: [dom-source-sink-event, ast-parse]
+    timeout: 300
+    config:
+      max_paths: 30
+      max_nodes: 1000
+      max_depth: 10
+
+  # ── External tool scan ───────────────────────────────────────────────
+  - id: tool-scan
+    type: tool-xss-scan
+    depends_on: [candidate-gen]
+    timeout: 300
+
+  # ── Sanitizer-aware scan (DOMPurify differential + live probe) ───────
+  - id: dompurify-scan
+    type: dompurify-scan
+    depends_on: [tool-scan]
+    timeout: 300
+    config:
+      max_payloads: 20
+
+  # ── Evidence fusion ──────────────────────────────────────────────────
+  - id: evidence-fusion
+    type: evidence-fusion
+    depends_on: [candidate-gen, dom-xss-detect, taint-graph, stored-xss-detect, tool-scan, dompurify-scan]
+    timeout: 60
+
+  # ── LLM context specialist ───────────────────────────────────────────
+  - id: llm-context
+    type: llm-context-specialist
+    depends_on: [evidence-fusion]
+    timeout: 600
+
+  # ── Iterative validation ─────────────────────────────────────────────
+  - id: xss-validate
+    type: xss-validator
+    depends_on: [llm-context]
+    timeout: 900
+
+  # ── Evidence collection + Finding creation ───────────────────────────
+  - id: evidence-collect
+    type: evidence-collector
+    depends_on: [xss-validate]
+    timeout: 120
+
+  # ── DOM CONFIRMATION — trigger the sink in a real browser ────────────
+  # HTTP validation cannot confirm a client-side-only flow; this node clicks
+  # javascript: links / fires the sink and records execution evidence.
+  - id: dom-confirm
+    type: dom-confirm
+    depends_on: [xss-validate]
+    timeout: 300
+    config:
+      max_candidates: 5
+      timeout_ms: 25000
+
+  # ── Report ───────────────────────────────────────────────────────────
+  - id: report
+    type: report
+    depends_on: [evidence-collect, taint-graph, dom-confirm]
+    timeout: 120
+    config:
+      format: terminal

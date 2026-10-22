@@ -1,0 +1,141 @@
+name: xss-balanced
+version: "2.2"
+description: >
+  Balanced XSS analysis:
+  recon → crawl → candidate-gen → validate → observe → re-plan.
+  Covers reflected, DOM (including event-triggered), and stored XSS.
+
+  Recon stage: technology detection + subdomain enum (passive) + HTTP probe.
+  All candidate stores are fused before validation.
+
+inputs:
+  target_url:
+    type: str
+    required: true
+
+nodes:
+  # ── Scope validation ────────────────────────────────────────────────
+  - id: scope-validation
+    type: scope-check
+    depends_on: []
+    timeout: 10
+
+  # ── Recon: technology + passive subdomain enum + HTTP probe ─────────
+  # All three run in parallel after scope-validation.
+
+  - id: recon
+    type: technology-detect
+    depends_on: [scope-validation]
+    timeout: 60
+
+  - id: subdomain-enum
+    type: subdomain-enum
+    depends_on: [scope-validation]
+    timeout: 120
+    config:
+      tools: [subfinder, assetfinder]
+      passive_only: true
+
+  - id: asset-fusion
+    type: asset-fusion
+    depends_on: [subdomain-enum]
+    timeout: 20
+
+  - id: http-probe
+    type: http-probe
+    depends_on: [asset-fusion]
+    timeout: 120
+    config:
+      timeout: 8
+      max_hosts: 30
+
+  # ── Endpoint inventory: merges live_urls for the crawler ────────────
+  - id: endpoint-inventory
+    type: endpoint-inventory
+    depends_on: [http-probe]
+    timeout: 20
+
+  # ── Crawl: seeded with endpoint_urls from recon ─────────────────────
+  # Receives: target_url, live_urls, endpoint_urls (from recon above)
+  - id: crawl
+    type: crawler
+    depends_on: [recon, endpoint-inventory]
+    timeout: 300
+    config:
+      max_pages: 60
+      max_depth: 3
+
+  # ── Reflected XSS — deterministic context + encoding analysis ───────
+  # Depends on dom-xss-detect so XHR/fetch endpoints discovered in the page's
+  # JS (which feed DOM sinks) can be probed for reflection too.
+  - id: candidate-gen
+    type: candidate-generator
+    depends_on: [crawl, dom-xss-detect]
+    timeout: 300
+    config:
+      max_candidates: 30
+
+  # ── DOM XSS — static JS source→sink + event-driven taint detection ──
+  - id: dom-xss-detect
+    type: dom-xss-detector
+    depends_on: [crawl]
+    timeout: 120
+
+  # ── Stored XSS — canary submission + display-page check ─────────────
+  - id: stored-xss-detect
+    type: stored-xss-detector
+    depends_on: [crawl]
+    timeout: 180
+
+  # ── External tools on discovered candidates ──────────────────────────
+  # Runs before fusion so tool observations can be fused AND validated,
+  # instead of only appearing in the report as dead-end findings.
+  - id: tool-scan
+    type: tool-xss-scan
+    depends_on: [candidate-gen]
+    timeout: 300
+
+  # ── Sanitizer-aware scan (DOMPurify differential + live probe) ───────
+  - id: dompurify-scan
+    type: dompurify-scan
+    depends_on: [tool-scan]
+    timeout: 300
+    config:
+      max_payloads: 20
+
+  # ── FUSION — merge reflected + DOM + stored + tool observations ──────
+  - id: evidence-fusion
+    type: evidence-fusion
+    depends_on: [candidate-gen, dom-xss-detect, stored-xss-detect, tool-scan, dompurify-scan]
+    timeout: 30
+
+  # ── VALIDATION — iterative test planning + HTTP validation ───────────
+  - id: xss-validate
+    type: xss-validator
+    depends_on: [evidence-fusion]
+    timeout: 300
+    config:
+      max_iterations: 3
+      max_candidates_per_iteration: 3
+      max_total_candidates: 10
+      max_requests: 20
+      max_runtime_s: 60
+      stop_on_confirmation: true
+
+  # ── DOM CONFIRMATION — trigger the sink in a real browser ────────────
+  # HTTP validation cannot confirm a client-side-only flow; this node clicks
+  # javascript: links / fires the sink and records execution evidence.
+  - id: dom-confirm
+    type: dom-confirm
+    depends_on: [xss-validate]
+    timeout: 300
+    config:
+      max_candidates: 5
+      timeout_ms: 25000
+
+  - id: report
+    type: report
+    depends_on: [xss-validate, tool-scan, dompurify-scan, dom-confirm]
+    timeout: 60
+    config:
+      format: terminal

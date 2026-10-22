@@ -1,0 +1,83 @@
+name: recon-only
+version: "2.2"
+description: "Full recon pipeline — asset discovery, HTTP probing, technology detection, tool health validation. Falls back to directory fuzzing if no endpoints found."
+
+inputs:
+  target_url:
+    type: str
+    required: true
+
+nodes:
+  - id: tool-health
+    type: tool-health
+    depends_on: []
+    timeout: 30
+    config:
+      required_tools: [subfinder, assetfinder, httpx]
+      optional_tools: [amass, ffuf, gowitness, nuclei]
+
+  - id: scope-validation
+    type: scope-check
+    depends_on: [tool-health]
+    timeout: 10
+
+  - id: recon
+    type: technology-detect
+    depends_on: [scope-validation]
+    timeout: 60
+
+  - id: subdomain-enum
+    type: subdomain-enum
+    depends_on: [scope-validation]
+    timeout: 180
+    config:
+      tools: [subfinder, assetfinder]
+      passive_only: true
+
+  - id: asset-fusion
+    type: asset-fusion
+    depends_on: [subdomain-enum]
+    timeout: 30
+
+  - id: http-probe
+    type: http-probe
+    depends_on: [asset-fusion]
+    timeout: 120
+    config:
+      timeout: 8
+      max_hosts: 50
+
+  - id: endpoint-inventory
+    type: endpoint-inventory
+    depends_on: [http-probe]
+    timeout: 30
+
+  # Directory discovery as fallback: only runs if endpoint_count == 0
+  - id: directory-discovery
+    type: directory-discovery
+    depends_on: [endpoint-inventory]
+    timeout: 300
+    config:
+      max_hosts: 10
+      max_requests: 500
+      rate_limit: 30
+      extensions: [php, asp, aspx, html, js, json, txt, bak]
+      skip_if_endpoints: true
+
+  # Optional: Nuclei vulnerability scanning on discovered endpoints
+  - id: nuclei-vuln
+    type: nuclei-vuln
+    depends_on: [endpoint-inventory]
+    timeout: 600
+    config:
+      enabled: false
+      tags: [cve, misconfiguration]
+      severity: [critical, high]
+      rate_limit: 5
+
+  - id: report
+    type: report
+    depends_on: [recon, nuclei-vuln]
+    timeout: 30
+    config:
+      format: terminal

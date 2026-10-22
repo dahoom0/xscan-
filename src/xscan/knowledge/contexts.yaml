@@ -1,0 +1,131 @@
+# XSS Context Registry
+# Defines injection contexts and the constraints/strategies for each.
+#
+# Each context maps to:
+#   breakout_chars: characters needed to escape the context
+#   test_strategy: how to plan payloads for this context
+#   xss_possible: whether XSS is possible at all in this context
+#   requires_browser: whether confirmation needs a real browser
+
+contexts:
+
+  - id: html_text
+    label: "HTML text node"
+    description: "Marker appears as text content between HTML tags"
+    breakout_chars: ["<"]
+    test_strategy: tag_injection
+    xss_possible: true
+    requires_browser: true
+    example: "<p>MARKER</p>"
+
+  - id: html_attribute
+    label: "HTML attribute (double-quoted)"
+    description: "Marker inside a double-quoted HTML attribute value"
+    breakout_chars: ['"']
+    test_strategy: attribute_breakout
+    xss_possible: true
+    requires_browser: true
+    example: '<input value="MARKER">'
+
+  - id: html_attribute_unquoted
+    label: "HTML attribute (unquoted)"
+    description: "Marker in an unquoted attribute value"
+    breakout_chars: [" ", ">"]
+    test_strategy: attribute_breakout
+    xss_possible: true
+    requires_browser: true
+    example: "<input value=MARKER>"
+
+  - id: script_string_double
+    label: "JavaScript string (double-quoted)"
+    description: "Marker inside a double-quoted JS string literal"
+    breakout_chars: ['"']
+    test_strategy: js_string_breakout
+    xss_possible: true
+    requires_browser: false
+    example: 'var x = "MARKER";'
+
+  - id: script_string_single
+    label: "JavaScript string (single-quoted)"
+    description: "Marker inside a single-quoted JS string literal"
+    breakout_chars: ["'"]
+    test_strategy: js_string_breakout
+    xss_possible: true
+    requires_browser: false
+    example: "var x = 'MARKER';"
+
+  - id: script_string_template
+    label: "JavaScript template literal"
+    description: "Marker inside a backtick template literal"
+    breakout_chars: ["`"]
+    test_strategy: js_string_breakout
+    xss_possible: true
+    requires_browser: false
+    example: "var x = `${MARKER}`;"
+
+  - id: script_expression
+    label: "JavaScript expression"
+    description: "Marker directly in a JS expression (no string wrapping)"
+    breakout_chars: [";"]
+    test_strategy: js_expression_injection
+    xss_possible: true
+    requires_browser: false
+
+  - id: url_param
+    label: "URL attribute"
+    description: "Marker inside href, src, action, or similar URL attribute"
+    breakout_chars: []
+    test_strategy: javascript_uri
+    xss_possible: true
+    requires_browser: true
+    notes: "javascript: URI is the primary attack vector"
+
+  - id: html_comment
+    label: "HTML comment"
+    description: "Marker inside <!-- ... -->"
+    breakout_chars: ["-->"]
+    test_strategy: comment_breakout
+    xss_possible: true
+    requires_browser: true
+
+  - id: css_value
+    label: "CSS value"
+    description: "Marker inside a CSS rule"
+    breakout_chars: ["}"]
+    test_strategy: css_injection
+    xss_possible: false
+    notes: "CSS injection is generally not XSS unless expression() is available (IE only)"
+
+  - id: json_value
+    label: "JSON response value"
+    description: "Marker reflected inside a JSON API response value"
+    breakout_chars: []
+    test_strategy: none_http_only
+    xss_possible: false
+    notes: "JSON reflection alone is not XSS — data must reach a DOM sink"
+    requires_browser: true
+
+  - id: json_key
+    label: "JSON response key"
+    description: "Marker reflected as a JSON key"
+    breakout_chars: []
+    test_strategy: none_http_only
+    xss_possible: false
+    notes: "Not directly exploitable — requires DOM sink downstream"
+
+  - id: unknown
+    label: "Unknown context"
+    description: "Context could not be classified"
+    breakout_chars: []
+    test_strategy: generic_probe
+    xss_possible: false
+    notes: "Requires manual investigation"
+
+  - id: dom
+    label: "DOM XSS (source→sink)"
+    description: "User-controlled source flows to a dangerous sink via JS"
+    breakout_chars: []
+    test_strategy: dom_specific
+    xss_possible: true
+    requires_browser: true
+    notes: "Cannot be verified server-side — browser required"

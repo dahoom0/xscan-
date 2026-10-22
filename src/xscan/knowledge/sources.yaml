@@ -1,0 +1,144 @@
+# XSS Source Registry
+# Each source is a browser-controlled value that can carry attacker data.
+# input_type is used to select appropriate payloads in the payload planner.
+#
+# Format:
+#   - id: unique identifier
+#     label: human-readable name
+#     pattern: regex matched against JS source code
+#     input_type: hash | query | href | referrer | window_name | angular_route | api_response | postmessage | custom
+#     framework: optional — framework that introduces this source
+#     confidence: high | medium | low
+#     notes: optional guidance
+
+sources:
+
+  # ── URL / Location sources ─────────────────────────────────────────────────
+  - id: location_hash
+    label: "location.hash"
+    pattern: "location\\.hash"
+    input_type: hash
+    confidence: high
+    notes: "Fragment identifier — never sent to server, always DOM-only"
+
+  - id: location_search
+    label: "location.search"
+    pattern: "location\\.search"
+    input_type: query
+    confidence: high
+
+  - id: url_search_params
+    label: "URLSearchParams.get()"
+    pattern: "URLSearchParams[^;]*\\.get\\("
+    input_type: query
+    confidence: high
+
+  - id: location_href
+    label: "location.href"
+    pattern: "location\\.href"
+    input_type: href
+    confidence: high
+
+  - id: document_url
+    label: "document.URL"
+    pattern: "document\\.URL"
+    input_type: href
+    confidence: high
+
+  - id: document_referrer
+    label: "document.referrer"
+    pattern: "document\\.referrer"
+    input_type: referrer
+    confidence: medium
+
+  - id: window_name
+    label: "window.name"
+    pattern: "window\\.name"
+    input_type: window_name
+    confidence: medium
+
+  - id: decode_uri_component
+    label: "decodeURIComponent()"
+    pattern: "decodeURIComponent\\("
+    input_type: query
+    confidence: medium
+    notes: "Often transforms a URL source — treat as a transformation, not standalone source"
+
+  # ── Angular-specific sources ───────────────────────────────────────────────
+  - id: angular_activated_route
+    label: "ActivatedRoute"
+    pattern: "ActivatedRoute"
+    input_type: angular_route
+    framework: Angular
+    confidence: medium
+    notes: "Angular router gives access to route params — user-controlled via URL"
+
+  - id: angular_route_snapshot
+    label: "ActivatedRoute.snapshot"
+    pattern: "this\\.route\\.snapshot"
+    input_type: angular_route
+    framework: Angular
+    confidence: high
+
+  - id: angular_query_params
+    label: "queryParams[]"
+    pattern: "queryParams\\["
+    input_type: query
+    framework: Angular
+    confidence: high
+
+  - id: angular_param_map
+    label: "paramMap.get()"
+    pattern: "\\.paramMap\\.get\\("
+    input_type: angular_route
+    framework: Angular
+    confidence: high
+
+  - id: angular_query_param_map
+    label: "queryParamMap.get()"
+    pattern: "\\.queryParamMap\\.get\\("
+    input_type: query
+    framework: Angular
+    confidence: high
+
+  - id: angular_route_fragment
+    label: "route.fragment"
+    pattern: "this\\.route\\.fragment"
+    input_type: hash
+    framework: Angular
+    confidence: high
+
+  # ── API / HTTP response sources (stored XSS vector) ───────────────────────
+  - id: api_subscribe
+    label: "API response (.subscribe)"
+    pattern: "\\.subscribe\\(\\s*(?:e|response|res|data|r)\\s*=>"
+    input_type: api_response
+    confidence: medium
+    notes: "Any API response can carry attacker-controlled stored XSS data"
+
+  - id: rxjs_pipe
+    label: "RxJS .pipe()"
+    pattern: "\\.pipe\\("
+    input_type: api_response
+    confidence: low
+
+  - id: http_client
+    label: "HttpClient"
+    pattern: "HttpClient|this\\.http\\."
+    input_type: api_response
+    framework: Angular
+    confidence: medium
+
+  # ── postMessage ────────────────────────────────────────────────────────────
+  - id: postmessage_listener
+    label: "postMessage listener"
+    pattern: "addEventListener\\s*\\(\\s*['\"]message['\"]"
+    input_type: postmessage
+    confidence: high
+    notes: "Cross-origin messages are fully attacker-controlled"
+
+  - id: event_data
+    label: "event.data"
+    pattern: "event\\.data"
+    input_type: postmessage
+    confidence: medium

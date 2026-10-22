@@ -1,0 +1,39 @@
+name: xss-fast
+version: "1.0"
+description: "Fast XSS scan — shallow crawl, no LLM analysis. Suitable for CI."
+
+inputs:
+  target_url:
+    type: str
+    required: true
+
+nodes:
+  - id: scope-validation
+    type: scope-check
+    depends_on: []
+    timeout: 10
+
+  - id: recon
+    type: technology-detect
+    depends_on: [scope-validation]
+    timeout: 60
+
+  - id: crawl
+    type: crawler
+    depends_on: [recon]
+    timeout: 120
+    config:
+      max_pages: 20
+      max_depth: 2
+
+  - id: reflection-detect
+    type: reflection-detector
+    depends_on: [crawl]
+    timeout: 120
+
+  - id: report
+    type: report
+    depends_on: [reflection-detect]
+    timeout: 30
+    config:
+      format: terminal
