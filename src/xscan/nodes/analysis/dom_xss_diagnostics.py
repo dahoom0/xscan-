@@ -30,15 +30,24 @@ class SourceAnalysisMetrics:
     lines_with_both: int = 0
     source_patterns_matched: dict[str, int] = field(default_factory=dict)
     sink_patterns_matched: dict[str, int] = field(default_factory=dict)
+    discard_reasons: dict[str, int] = field(default_factory=dict)
+
+    def record_discard(self, reason: str) -> None:
+        """Record why a candidate was discarded at this level."""
+        self.discard_reasons[reason] = self.discard_reasons.get(reason, 0) + 1
 
     def summary(self) -> str:
         """Return human-readable summary."""
-        return (
+        summary = (
             f"Lines: {self.total_lines_analysed} total, "
             f"{self.lines_with_source_patterns} sources, "
             f"{self.lines_with_sink_patterns} sinks, "
             f"{self.lines_with_both} both"
         )
+        if self.discard_reasons:
+            reasons_str = "; ".join(f"{k}:{v}" for k, v in self.discard_reasons.items())
+            summary += f"; discarded: {reasons_str}"
+        return summary
 
 
 @dataclass
@@ -123,7 +132,7 @@ class DOMAnalysisMetrics:
     def summary(self) -> str:
         """Human-readable summary."""
         lines = [
-            f"DOM Analysis Summary:",
+            "DOM Analysis Summary:",
             f"  Pages crawled: {self.pages_crawled}",
             f"  JS files extracted: {self.js_files_extracted}",
             f"  JS files vendor-filtered: {self.js_files_vendor_filtered}",

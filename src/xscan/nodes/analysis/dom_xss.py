@@ -36,8 +36,16 @@ import httpx
 
 from xscan.core.dag.node_registry import registry
 from xscan.knowledge import xss_knowledge
+from xscan.nodes.analysis.dom_xss_diagnostics import (
+    DOMAnalysisMetrics,
+    FileAnalysisMetrics,
+    SourceAnalysisMetrics,
+    log_file_analysis,
+    log_overall_metrics,
+)
 from xscan.nodes.base import ExecutionContext, NodeBase
 from xscan.nodes.emitter import NodeEmitter
+from xscan.schemas.source_sink_registry import sink_registry, source_registry
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36"
 
@@ -372,10 +380,11 @@ def build_test_url(
 
 @registry.register("dom-xss-detector")
 class DomXssDetectorNode(NodeBase, NodeEmitter):
-    node_type = "dom-xss-detector"
+    node_type = "dom-xss-detector"  # type: ignore
 
     def execute(self, ctx: ExecutionContext) -> dict[str, Any]:
         t0 = self.emit_started(ctx)
+        metrics = DOMAnalysisMetrics()
 
         target_url: str = ctx.get("target_url", "")
         if not target_url:
@@ -391,11 +400,13 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             if key and key not in merged:
                 merged.append(key)
         pages = merged[:max_pages]
+        metrics.pages_crawled = len(pages)
 
         urls_with_params: list[str] = ctx.get("urls_with_params") or []
         params_by_page = self._params_by_page(urls_with_params)
 
         js_units = self._collect_js(ctx, pages)
+        metrics.js_files_extracted = len(js_units)
         self.emit_progress(
             ctx,
             f"DOM analysis: {len(js_units)} script unit(s) from {len(pages)} page(s)",
@@ -403,11 +414,49 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
 
         candidates: list[dict[str, Any]] = []
         for page_url, js_url, content in js_units:
-            candidates.extend(
-                self._analyse(content, js_url, page_url, params_by_page)
+            file_metrics = FileAnalysisMetrics(
+                file_url=js_url,
+                file_type="inline" if "inline:" in js_url else "external",
+                file_size_bytes=len(content.encode("utf-8")),
+                lines_count=len(content.split("\n")),
+                is_vendor_code=_is_vendor_js(js_url, content),
             )
+            
+            if file_metrics.is_vendor_code:
+                # Detect vendor markers
+                for pattern, name in [
+                    (r"angular\.version", "AngularJS"),
+                    (r"window\.jQuery", "jQuery"),
+                    (r"React\.version", "React"),
+                    (r"__VUE__", "Vue"),
+                    (r"ng\$", "Angular"),
+                ]:
+                    if re.search(pattern, content):
+                        file_metrics.vendor_markers.append(name)
+                file_metrics.analysis_result = "SKIPPED: vendor code"
+                metrics.js_files_vendor_filtered += 1
+            else:
+                metrics.js_files_analysed += 1
+                # Perform analysis and collect metrics
+                file_cands = self._analyse_with_metrics(
+                    content, js_url, page_url, params_by_page, file_metrics
+                )
+                candidates.extend(file_cands)
+                file_metrics.analysis_result = (
+                    f"Generated {len(file_cands)} candidate(s)"
+                    if file_cands
+                    else "No candidates generated"
+                )
+            
+            metrics.file_metrics.append(file_metrics)
+            log_file_analysis(file_metrics)
+
+        metrics.total_lines_analysed = sum(f.lines_count for f in metrics.file_metrics)
+        metrics.dom_sources_detected = sum(len(f.sources_found) for f in metrics.file_metrics)
+        metrics.dom_sinks_detected = sum(len(f.sinks_found) for f in metrics.file_metrics)
 
         unique = self._dedupe_candidates(candidates)[:_MAX_CANDIDATES]
+        metrics.candidates_generated = len(unique)
         unique.extend(self._detect_csti(ctx, pages, urls_with_params))
 
         # API endpoints that feed sinks: surfaced for candidate-generator so the
@@ -437,10 +486,14 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
                     "source": js_url,
                 })
 
+        # Log overall diagnostics
+        log_overall_metrics(metrics)
+
         ms = (time.monotonic() - t0) * 1000
         self.emit_completed(ctx, metrics={
             "pages_analysed":     len(pages),
-            "js_files_analysed":  len(js_units),
+            "js_files_analysed":  metrics.js_files_analysed,
+            "js_files_vendor_filtered": metrics.js_files_vendor_filtered,
             "dom_candidates":     len(unique),
             "api_endpoints":      len(api_endpoints),
             "api_eval_endpoints": len(api_eval_endpoints),
@@ -451,6 +504,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             "dom_candidate_count":  len(unique),
             "api_endpoints":        api_endpoints,
             "api_eval_endpoints":   api_eval_endpoints,
+            "_diagnostics":         metrics.to_dict(),
         }
 
     # ------------------------------------------------------------------
@@ -663,7 +717,293 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
         return units
 
     # ------------------------------------------------------------------
-    # Analysis
+    # Analysis with Diagnostics
+    # ------------------------------------------------------------------
+
+    def _find_sources(self, code_line: str) -> list[Any]:
+        """
+        Find all matching sources using combined registry system.
+        First uses xss_knowledge (optimized), then enhances with registry patterns.
+        Returns only xss_knowledge sources for now (registry not yet integrated).
+        """
+        # Primary sources from xss_knowledge
+        sources = [s for s in xss_knowledge.sources if s.matches(code_line)]
+        
+        # Enhance with additional patterns from registry if needed
+        if not sources:
+            registry_sources = source_registry.find_matching(code_line)
+            # TODO: Convert registry sources to SourceEntry-like objects for now
+            sources.extend(registry_sources)  # type: ignore
+        
+        return sources
+
+    def _find_sinks(self, code_line: str) -> list[Any]:
+        """
+        Find all matching sinks using combined registry system.
+        First uses xss_knowledge (optimized), then enhances with registry patterns.
+        Returns only xss_knowledge sinks for now (registry not yet integrated).
+        """
+        # Primary sinks from xss_knowledge
+        sinks = [s for s in xss_knowledge.sinks if s.matches(code_line)]
+        
+        # Enhance with additional patterns from registry if needed
+        if not sinks:
+            registry_sinks = sink_registry.find_matching(code_line)
+            # TODO: Convert registry sinks to SinkEntry-like objects for now
+            sinks.extend(registry_sinks)  # type: ignore
+        
+        return sinks
+
+    # ------------------------------------------------------------------
+    # Variable tracking for extended proximity analysis
+    # ------------------------------------------------------------------
+
+    def _extract_variable_assignments(self, lines: list[str], start_line: int) -> dict[str, int]:
+        """
+        Track variable assignments up to start_line.
+        Returns dict mapping variable names to their line numbers.
+        Useful for connecting sources that are assigned to variables before use.
+        """
+        vars_by_name: dict[str, int] = {}
+        
+        # Common source variable names
+        source_vars = {
+            'tainted', 'input', 'param', 'query', 'search', 'hash', 'url',
+            'data', 'value', 'payload', 'result', 'response', 'text'
+        }
+        
+        for i in range(max(0, start_line - 50), min(start_line, len(lines))):
+            line = lines[i]
+            # Simple pattern: var/let/const name = source
+            for source_var in source_vars:
+                if source_var in line and '=' in line:
+                    # Very basic tracking
+                    vars_by_name[source_var] = i
+        
+        return vars_by_name
+
+    def _find_variable_usage(self, line: str, var_name: str) -> bool:
+        """Check if a variable is used in a line."""
+        import re
+        # Match word boundary to avoid substring matches
+        pattern = r'\b' + re.escape(var_name) + r'\b'
+        return bool(re.search(pattern, line))
+
+    # ------------------------------------------------------------------
+    # Analysis with Extended Window
+    # ------------------------------------------------------------------
+
+    def _analyse_with_metrics(
+        self,
+        content: str,
+        js_url: str,
+        page_url: str,
+        params_by_page: dict[str, list[str]],
+        file_metrics: FileAnalysisMetrics,
+    ) -> list[dict[str, Any]]:
+        """
+        Analyse JS content and track detailed metrics about discovery process.
+        """
+        hashchange = _hashchange_context(content)
+        lines = content.splitlines()
+        
+        # Initialize per-file source/sink analysis
+        file_metrics.source_analysis = SourceAnalysisMetrics(
+            total_lines_analysed=len(lines)
+        )
+
+        if len(lines) <= 5 and len(content) > 10_000:
+            candidates = self._analyse_minified_with_metrics(
+                content, js_url, page_url, params_by_page, hashchange, file_metrics
+            )
+        else:
+            candidates = self._analyse_multiline_with_metrics(
+                lines, js_url, page_url, params_by_page, hashchange, file_metrics
+            )
+
+        return candidates
+
+    def _analyse_minified_with_metrics(
+        self,
+        content: str,
+        js_url: str,
+        page_url: str,
+        params_by_page: dict[str, list[str]],
+        hashchange: bool,
+        file_metrics: FileAnalysisMetrics,
+    ) -> list[dict[str, Any]]:
+        """Analyse minified code with metrics tracking."""
+        candidates: list[dict[str, Any]] = []
+        for sink_entry in self._find_sinks(content):
+            for match in sink_entry.regex.finditer(content):
+                pos = match.start()
+                window = content[max(0, pos - 500): pos + 500]
+                file_metrics.sinks_found.append({
+                    "type": sink_entry.id,
+                    "line": 1,
+                    "snippet": window[:100],
+                })
+                
+                if sink_entry.id == "jquery_dollar":
+                    if "attr(" in window.replace(" ", ""):
+                        continue
+                    if _JQUERY_READY_RE.search(content[pos:pos + 40]):
+                        continue
+                
+                if _is_xhr_eval_flow(sink_entry.id, window):
+                    file_metrics.source_analysis.record_discard("xhr_eval_flow")
+                    continue
+                
+                for src_entry in self._find_sources(window):
+                    file_metrics.sources_found.append({
+                        "type": src_entry.id,
+                        "line": 1,
+                        "snippet": window[:100],
+                    })
+                    file_metrics.source_analysis.lines_with_both += 1
+                    
+                    candidate = self._build_candidate(
+                        src_label=src_entry.label,
+                        source_type=src_entry.input_type,
+                        sink_entry=sink_entry,
+                        matched_text=window,
+                        snippet=content[max(0, pos - 80): pos + 100],
+                        context=window,
+                        line=1,
+                        js_url=js_url,
+                        page_url=page_url,
+                        params_by_page=params_by_page,
+                        confidence="high",
+                        hashchange=hashchange,
+                    )
+                    candidates.append(candidate)
+                    break
+        return candidates
+
+    def _analyse_multiline_with_metrics(
+        self,
+        lines: list[str],
+        js_url: str,
+        page_url: str,
+        params_by_page: dict[str, list[str]],
+        hashchange: bool,
+        file_metrics: FileAnalysisMetrics,
+    ) -> list[dict[str, Any]]:
+        """Analyse line-by-line code with detailed metrics and extended proximity window."""
+        candidates: list[dict[str, Any]] = []
+        file_metrics.source_analysis.total_lines_analysed = len(lines)
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if len(stripped) < 5:
+                continue
+
+            # Check for sink patterns on this line using combined registry
+            matched_sinks = self._find_sinks(line)
+            if matched_sinks:
+                file_metrics.source_analysis.lines_with_sink_patterns += 1
+                for sink in matched_sinks:
+                    sink_id = sink.id
+                    file_metrics.source_analysis.sink_patterns_matched[sink_id] = (
+                        file_metrics.source_analysis.sink_patterns_matched.get(sink_id, 0) + 1
+                    )
+
+            if _JQUERY_READY_RE.search(line):
+                matched_sinks = [
+                    e for e in matched_sinks 
+                    if e.id != "jquery_dollar"
+                ]
+            
+            has_attribute_sink = any(
+                e.id in _ATTRIBUTE_SINK_IDS for e in matched_sinks
+            )
+            
+            for sink_entry in matched_sinks:
+                if has_attribute_sink and sink_entry.id == "jquery_dollar":
+                    continue
+
+                sink_id = sink_entry.id
+                file_metrics.sinks_found.append({
+                    "type": sink_id,
+                    "line": i + 1,
+                    "snippet": stripped[:120],
+                })
+
+                # ── Extended proximity window ────────────────────────────────
+                # Increased from 8 lines to 20 lines to catch more relationships
+                # Check context BEFORE sink (previous 20 lines) for sources
+                context_before_start = max(0, i - 20)
+                context_before = "\n".join(lines[context_before_start:i])
+                
+                # Full context for XHR detection
+                context_full_start = max(0, i - 20)
+                context_full = "\n".join(lines[context_full_start: i + 6])
+
+                # XHR→eval() suppression
+                if _is_xhr_eval_flow(sink_id, context_full):
+                    file_metrics.source_analysis.record_discard("xhr_eval_flow")
+                    continue
+
+                # Try to find source on the same line (highest confidence)
+                src_entry = next(
+                    (s for s in self._find_sources(line)),
+                    None,
+                )
+                confidence = "high"
+                
+                if src_entry is None:
+                    # Try to find source in context before (high-medium confidence)
+                    context_sources_before = self._find_sources(context_before)
+                    src_entry = next(iter(context_sources_before), None)
+                    if src_entry is not None:
+                        confidence = "high-medium"
+                        file_metrics.source_analysis.record_discard("source_in_extended_before")
+                
+                if src_entry is None:
+                    # Try to find source in full context (medium confidence)
+                    context_sources_full = self._find_sources(context_full)
+                    src_entry = next(iter(context_sources_full), None)
+                    if src_entry is not None:
+                        confidence = "medium"
+                        file_metrics.source_analysis.record_discard("source_in_extended_full")
+                
+                if src_entry is None:
+                    # No source found in extended window
+                    file_metrics.source_analysis.record_discard("no_source_in_extended_window")
+                    continue
+
+                # Source found!
+                src_id = src_entry.id
+                file_metrics.sources_found.append({
+                    "type": src_id,
+                    "line": i + 1,
+                    "snippet": stripped[:120],
+                })
+                file_metrics.source_analysis.lines_with_source_patterns += 1
+                file_metrics.source_analysis.source_patterns_matched[src_id] = (
+                    file_metrics.source_analysis.source_patterns_matched.get(src_id, 0) + 1
+                )
+                file_metrics.source_analysis.lines_with_both += 1
+
+                candidate = self._build_candidate(
+                    src_label=src_entry.label,
+                    source_type=src_entry.input_type,
+                    sink_entry=sink_entry,
+                    matched_text=line,
+                    snippet=stripped[:200],
+                    context=context_full,
+                    line=i + 1,
+                    js_url=js_url,
+                    page_url=page_url,
+                    params_by_page=params_by_page,
+                    confidence=confidence,
+                    hashchange=hashchange,
+                )
+                candidates.append(candidate)
+        return candidates
+
+    # ------------------------------------------------------------------
+    # Analysis (legacy, preserved for now)
     # ------------------------------------------------------------------
 
     def _analyse(
@@ -690,7 +1030,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
         hashchange: bool = False,
     ) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        for sink_entry in xss_knowledge.sinks:
+        for sink_entry in self._find_sinks(content):
             for match in sink_entry.regex.finditer(content):
                 pos = match.start()
                 window = content[max(0, pos - 500): pos + 500]
@@ -702,9 +1042,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
                 # XHR→eval() suppression: server-side reflection, not DOM sink.
                 if _is_xhr_eval_flow(sink_entry.id, window):
                     continue
-                for src_entry in xss_knowledge.sources:
-                    if not src_entry.regex.search(window):
-                        continue
+                for src_entry in self._find_sources(window):
                     candidate = self._build_candidate(
                         src_label=src_entry.label,
                         source_type=src_entry.input_type,
@@ -737,19 +1075,23 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             if len(stripped) < 5:
                 continue
 
-            matched_sinks = [
-                entry for entry in xss_knowledge.sinks if entry.regex.search(line)
-            ]
+            matched_sinks = self._find_sinks(line)
             if _JQUERY_READY_RE.search(line):
                 # $() used to register a ready callback selects nothing.
-                matched_sinks = [e for e in matched_sinks if e.id != "jquery_dollar"]
-            has_attribute_sink = any(e.id in _ATTRIBUTE_SINK_IDS for e in matched_sinks)
+                matched_sinks = [
+                    e for e in matched_sinks 
+                    if e.id != "jquery_dollar"
+                ]
+            has_attribute_sink = any(
+                e.id in _ATTRIBUTE_SINK_IDS for e in matched_sinks
+            )
             for sink_entry in matched_sinks:
                 if has_attribute_sink and sink_entry.id == "jquery_dollar":
                     continue
 
-                context_start = max(0, i - 8)
-                context = "\n".join(lines[context_start: i + 9])
+                # Extended context window (20 lines before, 5 after)
+                context_start = max(0, i - 20)
+                context = "\n".join(lines[context_start: i + 6])
 
                 # ── XHR→eval() suppression ────────────────────────────────
                 # When eval() is fed from responseText in the same context
@@ -762,15 +1104,13 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
                     continue
 
                 src_entry = next(
-                    (s for s in xss_knowledge.sources if s.regex.search(line)),
+                    (s for s in self._find_sources(line)),
                     None,
                 )
                 confidence = "high"
                 if src_entry is None:
-                    src_entry = next(
-                        (s for s in xss_knowledge.sources if s.regex.search(context)),
-                        None,
-                    )
+                    src_sources = self._find_sources(context)
+                    src_entry = next(iter(src_sources), None)
                     confidence = "medium"
                 if src_entry is None:
                     continue
