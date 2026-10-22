@@ -378,3 +378,76 @@ Key rules enforced in code:
   budgets or claim success — only browser/HTTP evidence confirms.
 * **Findings explain themselves**: every confirmed candidate carries `why`
   lines generated from its own evidence (source, flow, sink, constraints).
+
+
+---
+
+## 10. Model-Driven Synthesis Initiative (P1-P4)
+
+A structured initiative to replace generic family-based payload synthesis with evidence-driven,
+model-informed synthesis that adapts payloads to the observed target's exact constraints.
+
+### P1: Context Classification (✓ Complete)
+- **Component**: `ExecutionContextType` enum (13 types)
+- **Files**: `src/xscan/nodes/analysis/context_classification.py`
+- **Purpose**: Structured classification of execution contexts (JS string, HTML attribute, JSON, etc.)
+- **Output**: Typed `ContextClassification` model with confidence and strategy recommendations
+
+### P2: Vulnerability Model Builder (✓ Complete)
+- **Component**: `VulnerabilityModelBuilderNode`
+- **Files**: 
+  - `src/xscan/nodes/analysis/vulnerability_model_builder.py` (node implementation)
+  - `src/xscan/schemas/vuln_model.py` (schema, already mature)
+  - `tests/unit/nodes/test_vulnerability_model_builder.py` (comprehensive tests)
+- **Purpose**: Transform evidence (reflection, encoding profile, context) into typed `VulnerabilityModel`
+- **Contract**: 
+  - Input: candidates dict with context_analysis, encoding_profile
+  - Output: VulnerabilityModel instances with flow, constraints, and construction plans
+  - Evidence: Each model linked to originating evidence nodes for provenance
+
+### P3: Strategy Selector (Planned)
+- **Purpose**: Select synthesis strategies based on VulnerabilityModel
+- **Input**: VulnerabilityModel with constraints
+- **Output**: Prioritised list of (strategy, technique) pairs
+
+### P4: Constraint-Driven Synthesis (Planned)
+- **Purpose**: Generate payloads using only available characters
+- **Features**:
+  - Respect raw/encoded/stripped character sets from encoding profile
+  - Support iterative refinement on observed failures
+  - Generate payloads specific to THIS target, not generic dictionary payloads
+
+### Synthesis Pipeline Integration
+```
+Evidence (HTTP response, DOM snapshot, AST)
+  ↓
+Context Classification (P1)
+  ↓
+Vulnerability Model Builder (P2)
+  ├─ Flow reconstruction
+  ├─ Constraint extraction
+  └─ Sink context analysis
+  ↓
+Strategy Selector (P3)
+  ├─ Map model → applicable families
+  └─ Prioritise based on likelihood
+  ↓
+Constraint-Driven Synthesis (P4)
+  ├─ Character feasibility check
+  ├─ Syntax balance analysis
+  └─ Payload generation
+  ↓
+Validation (IterativeValidator, browser confirmation)
+  ├─ Observation analysis
+  ├─ Constraint refinement
+  └─ Iterative retry if needed
+  ↓
+Finding (with evidence + construction plan explanation)
+```
+
+This design ensures:
+- **Evidence-grounded**: Every payload is derived from THIS target's profile
+- **Deterministic**: No randomness in synthesis; LLM used only for planning, not payload generation
+- **Explainable**: Every payload carries construction plan showing why it works
+- **Adaptive**: Failures refine constraints for next iteration
+- **Testable**: Each component has typed inputs/outputs for unit and integration testing
