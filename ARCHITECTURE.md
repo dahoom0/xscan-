@@ -405,10 +405,28 @@ model-informed synthesis that adapts payloads to the observed target's exact con
   - Output: VulnerabilityModel instances with flow, constraints, and construction plans
   - Evidence: Each model linked to originating evidence nodes for provenance
 
-### P3: Strategy Selector (Planned)
-- **Purpose**: Select synthesis strategies based on VulnerabilityModel
-- **Input**: VulnerabilityModel with constraints
-- **Output**: Prioritised list of (strategy, technique) pairs
+### P3: Strategy Selector (✓ Complete)
+- **Component**: `StrategySelectorNode`
+- **Files**: 
+  - `src/xscan/nodes/analysis/strategy_selector.py` (node implementation)
+  - `src/xscan/schemas/synthesis_strategy.py` (schemas and strategy registry)
+  - `tests/unit/nodes/test_strategy_selector.py` (comprehensive tests)
+- **Purpose**: Map VulnerabilityModel to ranked synthesis strategies
+- **Schemas**:
+  - `SynthesisFamilyType` enum (14 payload families: tag_injection, attribute_breakout, script_string_breakout, json_object_breakout, event_handler, javascript_protocol, angular_csti, etc.)
+  - `SynthesisTechnique` (specific payloads within families)
+  - `SynthesisStrategy` (family + prioritized techniques)
+  - `StrategyRanking` (ranked output for each model)
+- **Algorithm**:
+  - Input: VulnerabilityModel with execution context + constraints
+  - Map context type → applicable strategy families
+  - Score techniques by character availability
+  - Rank by feasibility (0.0-1.0 confidence)
+  - Output: Ranked StrategyRanking with top strategies first
+- **Contract**:
+  - Input: list[VulnerabilityModel] from P2
+  - Output: list[StrategyRanking] with (strategy, confidence) tuples
+  - Deterministic: Same model → same ranking every time
 
 ### P4: Constraint-Driven Synthesis (Planned)
 - **Purpose**: Generate payloads using only available characters
