@@ -26,7 +26,7 @@ from urllib.parse import urljoin
 import httpx
 
 from xscan.core.dag.node_registry import registry
-from xscan.nodes.base import NodeBase, ExecutionContext
+from xscan.nodes.base import ExecutionContext, NodeBase
 from xscan.nodes.emitter import NodeEmitter
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36"
@@ -36,16 +36,23 @@ _MAX_FILES    = 50        # cap total files per scan
 
 @registry.register("js-extractor")
 class JsExtractorNode(NodeBase, NodeEmitter):
-    node_type = "js-extractor"
 
     def execute(self, ctx: ExecutionContext) -> dict[str, Any]:
         t0 = self.emit_started(ctx)
 
         target_url: str      = ctx.get("target_url", "")
         urls:       list[str] = ctx.get("urls", [target_url]) if target_url else []
+        
+        # Also include post-submission pages from form-submitter
+        submitted_pages: list[dict[str, Any]] = ctx.get("submitted_form_pages", [])
+        additional_urls = [p["url"] for p in submitted_pages]
+        
+        # Combine all URLs to scan
+        all_urls = urls + additional_urls
+        
         max_files:  int       = int(ctx.config.get("max_files", _MAX_FILES))
 
-        js_files:    list[dict] = []
+        js_files:    list[dict[str, Any]] = []
         seen_urls:   set[str]   = set()
         inline_count = 0
 
@@ -54,7 +61,7 @@ class JsExtractorNode(NodeBase, NodeEmitter):
             verify=False, headers={"User-Agent": _UA},
         ) as client:
 
-            for page_url in urls[:30]:  # limit pages scanned for JS
+            for page_url in all_urls[:30]:  # limit pages scanned for JS
                 try:
                     ctx.scope.assert_allowed(page_url, operation="http_request")
                     resp = client.get(page_url)
@@ -111,6 +118,8 @@ class JsExtractorNode(NodeBase, NodeEmitter):
             "js_files":    len(js_files),
             "inline":      inline_count,
             "external":    len(js_files) - inline_count,
+            "pages_scanned": len(all_urls),
+            "submitted_pages_processed": len(submitted_pages),
         }, duration_ms=ms)
 
         return {

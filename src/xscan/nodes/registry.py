@@ -16,6 +16,7 @@ from xscan.nodes.recon.endpoint_inventory   import EndpointInventoryNode      # 
 from xscan.nodes.recon.screenshot_capture   import ScreenshotCaptureNode      # noqa: F401
 from xscan.nodes.recon.nuclei_vuln          import NucleiVulnNode             # noqa: F401
 from xscan.nodes.crawler.discover           import CrawlerNode                # noqa: F401
+from xscan.nodes.crawler.form_submitter     import FormSubmitterNode          # noqa: F401
 
 # Phase 2 nodes — JS extraction + AST (xss-deep)
 from xscan.nodes.analysis.js_extract import JsExtractorNode         # noqa: F401
@@ -26,11 +27,14 @@ from xscan.nodes.dom.dom_analysis  import DomSourceSinkEventNode    # noqa: F401
 from xscan.nodes.dom.taint_builder import TaintGraphBuilderNode     # noqa: F401
 
 # Phase 4 nodes — candidate generation (xss-balanced)
-from xscan.nodes.analysis.candidate_gen  import CandidateGeneratorNode   # noqa: F401
-from xscan.nodes.analysis.dom_xss        import DomXssDetectorNode        # noqa: F401
-from xscan.nodes.analysis.dompurify_scan import DomPurifyScanNode         # noqa: F401
-from xscan.nodes.analysis.stored_xss     import StoredXssDetectorNode     # noqa: F401
-from xscan.nodes.analysis.tool_scan      import ToolXssScanNode           # noqa: F401
+from xscan.nodes.analysis.candidate_gen               import CandidateGeneratorNode       # noqa: F401
+from xscan.nodes.analysis.dom_xss                     import DomXssDetectorNode           # noqa: F401
+from xscan.nodes.analysis.dompurify_scan              import DomPurifyScanNode            # noqa: F401
+from xscan.nodes.analysis.stored_xss                  import StoredXssDetectorNode        # noqa: F401
+from xscan.nodes.analysis.tool_scan                   import ToolXssScanNode              # noqa: F401
+from xscan.nodes.analysis.api_reflection_detector     import APIReflectionDetectorNode   # noqa: F401
+from xscan.nodes.analysis.response_reflection_detector import ResponseReflectionDetectorNode  # noqa: F401
+from xscan.nodes.analysis.escape_probe_analyzer       import EscapeProbeAnalyzerNode     # noqa: F401
 
 # Phase 5 nodes — evidence fusion + LLM context + test planning
 from xscan.nodes.xss.fusion              import EvidenceFusionNode         # noqa: F401
@@ -49,11 +53,12 @@ from xscan.nodes.analysis.reflection import ReflectionDetectorNode   # noqa: F40
 from xscan.nodes.reporting.report import ReportNode                  # noqa: F401
 
 __all__ = [
-    "ScopeCheckNode", "TechnologyDetectNode", "ToolHealthNode", "CrawlerNode",
+    "ScopeCheckNode", "TechnologyDetectNode", "ToolHealthNode", "CrawlerNode", "FormSubmitterNode",
     "JsExtractorNode", "AstParserNode",
     "DomSourceSinkEventNode", "TaintGraphBuilderNode",
     "CandidateGeneratorNode", "DomXssDetectorNode",
     "StoredXssDetectorNode", "ToolXssScanNode", "DomPurifyScanNode",
+    "APIReflectionDetectorNode", "ResponseReflectionDetectorNode", "EscapeProbeAnalyzerNode",
     "EvidenceFusionNode", "LLMContextSpecialistNode", "LLMCandidateTriageNode",
     "XssValidatorNode", "DomConfirmNode", "EvidenceCollectorNode",
     "ReflectionDetectorNode", "ReportNode", "ScreenshotCaptureNode", "NucleiVulnNode",

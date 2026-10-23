@@ -65,12 +65,51 @@ nodes:
       max_pages: 60
       max_depth: 3
 
+  # ── Interactive form submission: discover post-submission pages ──────
+  # Submit discovered forms with benign test values to capture dynamically-loaded
+  # scripts (e.g., searchResults.js) that only appear after form submission.
+  # This is critical for catching eval-on-AJAX vulnerabilities.
+  - id: form-submit
+    type: form-submitter
+    depends_on: [crawl]
+    timeout: 180
+    config:
+      http_timeout: 12
+
+  # ── Response reflection detection ───────────────────────────────────
+  # Detect when request parameters are echoed in response bodies.
+  # This identifies the "response-reflection" source class, critical for
+  # eval-on-AJAX-response patterns.
+  - id: response-reflection-detect
+    type: response-reflection-detect
+    depends_on: [crawl]
+    timeout: 120
+    config:
+      http_timeout: 10
+
+  # ── Escape-aware vulnerability probing ──────────────────────────────
+  # Test which special characters are escaped and which bypass escaping.
+  # Detects sophisticated bypasses like "backslash not escaped, quotes are".
+  - id: escape-probe
+    type: escape-probe-analyzer
+    depends_on: [crawl]
+    timeout: 120
+    config:
+      http_timeout: 10
+
   # ── Reflected XSS — deterministic context + encoding analysis ───────
   # Depends on dom-xss-detect so XHR/fetch endpoints discovered in the page's
   # JS (which feed DOM sinks) can be probed for reflection too.
+  - id: api-reflection-detect
+    type: api-reflection-detect
+    depends_on: [crawl]
+    timeout: 120
+    config:
+      max_probes: 10
+
   - id: candidate-gen
     type: candidate-generator
-    depends_on: [crawl, dom-xss-detect]
+    depends_on: [crawl, dom-xss-detect, api-reflection-detect, response-reflection-detect]
     timeout: 300
     config:
       max_candidates: 30
@@ -78,7 +117,7 @@ nodes:
   # ── DOM XSS — static JS source→sink + event-driven taint detection ──
   - id: dom-xss-detect
     type: dom-xss-detector
-    depends_on: [crawl]
+    depends_on: [crawl, form-submit]
     timeout: 120
 
   # ── Stored XSS — canary submission + display-page check ─────────────
