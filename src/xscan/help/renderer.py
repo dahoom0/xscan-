@@ -40,10 +40,47 @@ class HelpRenderer:
     # ------------------------------------------------------------------
 
     def render_file(self, path: Path) -> None:
-        content = path.read_text(encoding="utf-8")
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # Fallback for encoding issues on Windows
+            content = path.read_text(encoding="latin-1")
+        
         self.con.print()
-        self.con.print(Markdown(content))
+        # Render as formatted text with basic styling, avoiding Rich Markdown issues
+        self._render_markdown_simple(content)
         self.con.print()
+
+    def _render_markdown_simple(self, content: str) -> None:
+        """Simple Markdown renderer that avoids Rich issues with special characters."""
+        for line in content.split('\n'):
+            if line.startswith('# '):
+                # H1 heading
+                self.con.print(f"[bold cyan]{line[2:]}[/bold cyan]")
+            elif line.startswith('## '):
+                # H2 heading
+                self.con.print(f"[bold]{line[3:]}[/bold]")
+            elif line.startswith('### '):
+                # H3 heading
+                self.con.print(f"[yellow]{line[4:]}[/yellow]")
+            elif line.startswith('```'):
+                # Code block (skip marker, will be caught as empty line next)
+                pass
+            elif line.startswith('|'):
+                # Table row - render as-is
+                self.con.print(line)
+            elif line.strip() == '---':
+                # Horizontal rule
+                self.con.print("[dim]" + "-" * 79 + "[/dim]")
+            elif line.startswith('- '):
+                # Bullet point
+                self.con.print(f"  * {line[2:]}")
+            elif line.startswith('  '):
+                # Indented text (code or sub-item)
+                self.con.print(f"  {line}")
+            else:
+                # Regular text
+                self.con.print(line)
 
     # ------------------------------------------------------------------
     # Inline topic (dict with "title" and "body" keys)
@@ -55,7 +92,7 @@ class HelpRenderer:
         self.con.print()
         if title:
             self.con.print(Panel(Text(title, style="bold cyan"), box=box.SIMPLE))
-        self.con.print(Markdown(body))
+        self._render_markdown_simple(body)
         self.con.print()
 
     # ------------------------------------------------------------------
