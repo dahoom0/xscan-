@@ -333,6 +333,7 @@ Node requests: GET https://target.example.com/api/search?q=test
 | 8 | Evidence Graph · Validation Contracts | Complete |
 | 9 | Migrate prototype nodes into DAG | Complete |
 | 10 | XSS pipeline (full DAG) | Complete |
+| 1b | DOM-XSS diagnostics + registry integration | Complete |
 | 11 | TUI / VS Code integration | Pending |
 | 12 | Lab fixtures + end-to-end tests | Complete |
 | 13 | Async I/O + Dedup + Tiered Escalation | Planned (see PHASE_13_ASYNC_DEDUP_TIERING.md) |
