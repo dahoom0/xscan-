@@ -99,6 +99,59 @@ class XssValidatorNode(NodeBase, NodeEmitter):
             ep     = candidate.get("encoding_profile") or {}
             techs  = ctx.get("technologies", []) or []
 
+            # Check if this is an eval-injection candidate (Phase 1c)
+            is_eval_injection = candidate.get("is_response_reflection") or candidate.get("escape_bypass")
+            if is_eval_injection:
+                # Use specialized eval-injection validator
+                payload = candidate.get("best_payload", "")
+                dangerous_sinks = candidate.get("dangerous_sinks", ["eval"])
+                escape_bypass = candidate.get("escape_bypass", False)
+                
+                self.emit_progress(
+                    ctx,
+                    f"Validating [{i+1}/{len(candidates)}]  "
+                    f"param={param}  type=eval_injection  "
+                    f"payload={payload[:40]}",
+                )
+                
+                try:
+                    from xscan.validation.eval_injection_validator import EvalInjectionValidator
+                    
+                    eval_validator = EvalInjectionValidator(ctx.scope, ctx.policy)
+                    validation_result = eval_validator.validate(
+                        url=url,
+                        parameter=param,
+                        payload=payload,
+                        escape_bypass=escape_bypass,
+                        dangerous_sinks=dangerous_sinks,
+                    )
+                    
+                    # Build result
+                    result = dict(candidate)
+                    result.update({
+                        "validation_status": "CONFIRMED" if validation_result.get("confirmed") else "VALIDATED" if validation_result.get("validated") else "FAILED",
+                        "validated": validation_result.get("validated", False),
+                        "confirmed": validation_result.get("confirmed", False),
+                        "best_payload": payload,
+                        "best_test_url": validation_result.get("test_url", url),
+                        "evidence": validation_result.get("evidence"),
+                    })
+                    
+                    validated.append(result)
+                    
+                    if validation_result.get("confirmed"):
+                        confirmed_count += 1
+                        self.emit_progress(ctx, f"  CONFIRMED (eval-injection): {payload[:60]!r}")
+                    elif validation_result.get("validated"):
+                        self.emit_progress(ctx, f"  Validated (eval-injection): {payload[:60]!r}")
+                    else:
+                        self.emit_progress(ctx, f"  FAILED: {validation_result.get('error')}")
+                    
+                    continue
+                except Exception as e:
+                    self.emit_warning(ctx, f"Eval-injection validation failed: {str(e)[:100]}")
+                    # Fall through to standard validation
+
             # For DOM candidates: unpack execution semantics from encoding_profile
             # (fusion.py stores exec semantics there for DOM candidates).
             # Stored candidates carry the same style of profile (sink_kind /

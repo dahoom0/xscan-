@@ -60,6 +60,10 @@ class CandidateGeneratorNode(NodeBase, NodeEmitter):
 
         urls_with_params: list[str] = ctx.get("urls_with_params", [])
         forms:            list[dict] = ctx.get("forms", [])
+        reflection_candidates: list[dict] = ctx.get("reflection_candidates", [])  # From api-reflection-detect
+        response_reflections: list[dict] = ctx.get("response_reflections", [])  # From response-reflection-detect (Phase 1c)
+        high_risk_reflections: list[dict] = ctx.get("high_risk_reflections", [])  # High-risk eval patterns
+        escape_vulns: list[dict] = ctx.get("escape_vulnerabilities", [])  # From escape-probe-analyzer (Phase 1c)
         max_candidates:   int = int(ctx.config.get("max_candidates", 50))
 
         candidates: list[dict] = []
@@ -91,6 +95,157 @@ class CandidateGeneratorNode(NodeBase, NodeEmitter):
                             ctx,
                             f"  Candidate: {param} @ {url[:60]}"
                             f"  context={c['context_analysis']['context']}",
+                        )
+
+            # ── API Reflection candidates (eval injection) ─────────────
+            # These come from probing API endpoints for parameter reflection.
+            # They represent JSON/JavaScript contexts where reflection can lead to eval injection.
+            from xscan.nodes.analysis.eval_injection_payloads import EvalInjectionPayloads
+            for refl in reflection_candidates[:10]:
+                if len(candidates) >= max_candidates:
+                    break
+                url = refl.get("url", "")
+                param = refl.get("parameter", "")
+                sink_type = refl.get("sink_type", "eval")
+                context = refl.get("context", "json")
+                
+                if not url or not param:
+                    continue
+                
+                inputs_analyzed += 1
+                
+                # Generate eval injection payloads based on reflection context
+                payload_list = EvalInjectionPayloads.for_reflection_point(context)
+                
+                for payload_obj in payload_list[:3]:  # Top 3 payloads per reflection point
+                    # Create candidate for each payload
+                    candidate = {
+                        "url": url,
+                        "param": param,
+                        "method": "GET",
+                        "source_type": "query",
+                        "sink_kind": sink_type,
+                        "sink": sink_type,
+                        "context_analysis": {
+                            "context": context,
+                            "is_reflected": True,
+                            "reflection_type": "api_eval",
+                        },
+                        "encoding_profile": {
+                            "sink_kind": sink_type,
+                            "source_type": "query",
+                        },
+                        "best_payload": payload_obj.payload,
+                        "payload_technique": payload_obj.execution_method,
+                        "payload_confidence": payload_obj.confidence,
+                        "is_api_reflection": True,
+                        "reflection_sink_type": sink_type,
+                    }
+                    candidates.append(candidate)
+                    self.emit_progress(
+                        ctx,
+                        f"  Candidate (api_eval): {param} @ {url[:60]}"
+                        f"  technique={payload_obj.execution_method}"
+                        f"  confidence={payload_obj.confidence:.2f}",
+                    )
+
+            # ── High-Risk Reflections with Dangerous Sinks (Phase 1c) ────
+            # response-reflection-detect identified reflections in eval(), Function, etc.
+            # These are critical — generate eval-injection candidates with escape-bypass payloads
+            for refl in high_risk_reflections[:10]:
+                if len(candidates) >= max_candidates:
+                    break
+                url = refl.get("url", "")
+                param = refl.get("parameter", "")
+                dangerous_sinks = refl.get("dangerous_sinks", [])
+                
+                if not url or not param or not dangerous_sinks:
+                    continue
+                
+                inputs_analyzed += 1
+                
+                # Check if we have escape bypass info for this parameter
+                matching_escape_vuln = next(
+                    (e for e in escape_vulns if e.get("parameter") == param),
+                    None
+                )
+                
+                # Generate eval-injection payloads with escape-aware synthesis
+                if matching_escape_vuln and matching_escape_vuln.get("bypass_techniques"):
+                    # Use escape-bypass payload (e.g., backslash trick)
+                    bypass_techniques = matching_escape_vuln.get("bypass_techniques", [])
+                    # Extract payload from technique string like "double_backslash: \\\"-alert(1)}//"
+                    for technique in bypass_techniques[:2]:
+                        if ": " in technique:
+                            payload = technique.split(": ", 1)[1]
+                        else:
+                            payload = technique
+                        
+                        candidate = {
+                            "url": url,
+                            "param": param,
+                            "parameter": param,
+                            "method": "GET",
+                            "source_type": "query",
+                            "sink_kind": "eval",
+                            "sink": "eval()" if "eval" in dangerous_sinks else dangerous_sinks[0],
+                            "context_analysis": {
+                                "context": "javascript",
+                                "is_reflected": True,
+                                "reflection_type": "response_reflection_eval",
+                            },
+                            "encoding_profile": {
+                                "sink_kind": "eval",
+                                "source_type": "query",
+                            },
+                            "best_payload": payload,
+                            "payload_technique": "escape_bypass",
+                            "payload_confidence": 0.95,
+                            "is_response_reflection": True,
+                            "dangerous_sinks": dangerous_sinks,
+                            "escape_bypass": True,
+                            "bypass_technique": technique,
+                        }
+                        candidates.append(candidate)
+                        self.emit_progress(
+                            ctx,
+                            f"  Candidate (eval_escape_bypass): {param} @ {url[:60]}"
+                            f"  payload={payload[:40]}"
+                            f"  sinks={','.join(dangerous_sinks)}",
+                        )
+                else:
+                    # No escape bypass info, generate standard eval payloads
+                    payload_list = EvalInjectionPayloads.for_json_context()
+                    
+                    for payload_obj in payload_list[:2]:
+                        candidate = {
+                            "url": url,
+                            "param": param,
+                            "parameter": param,
+                            "method": "GET",
+                            "source_type": "query",
+                            "sink_kind": "eval",
+                            "sink": "eval()" if "eval" in dangerous_sinks else dangerous_sinks[0],
+                            "context_analysis": {
+                                "context": "javascript",
+                                "is_reflected": True,
+                                "reflection_type": "response_reflection_eval",
+                            },
+                            "encoding_profile": {
+                                "sink_kind": "eval",
+                                "source_type": "query",
+                            },
+                            "best_payload": payload_obj.payload,
+                            "payload_technique": payload_obj.execution_method,
+                            "payload_confidence": payload_obj.confidence,
+                            "is_response_reflection": True,
+                            "dangerous_sinks": dangerous_sinks,
+                        }
+                        candidates.append(candidate)
+                        self.emit_progress(
+                            ctx,
+                            f"  Candidate (response_reflection_eval): {param} @ {url[:60]}"
+                            f"  technique={payload_obj.execution_method}",
                         )
 
             # ── XHR/fetch API endpoints discovered by dom-xss-detect ─
