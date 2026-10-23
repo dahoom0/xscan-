@@ -141,12 +141,15 @@ class HelpRenderer:
         for i, item in enumerate(menu, start=1):
             label = item.get("label", "")
             topic = item.get("topic", "")
-            self.con.print(f"  [bold]{i:>2}.[/bold]  {label}")
+            self.con.print(f"  [bold cyan]{i:>2}[/bold cyan]  {label}")
         self.con.print()
-        self.con.print(
-            "[dim]Run [cyan]xscan help <topic>[/cyan] for any item, "
-            "or [cyan]xscan help search \"<query>\"[/cyan] for free-text search.[/dim]\n"
-        )
+        self.con.print("[bold]Usage:[/bold]")
+        self.con.print("  [cyan]xscan help 1[/cyan]              # Run option 1")
+        self.con.print("  [cyan]xscan help getting-started[/cyan] # Or use topic name")
+        self.con.print("  [cyan]xscan help search \"keyword\"[/cyan]  # Search topics")
+        self.con.print("  [cyan]xscan help topics[/cyan]           # List all topics")
+        self.con.print()
+        self.con.print("[dim]TIP: Use numbers 1-14 to quickly navigate menu items.[/dim]\n")
 
     # ------------------------------------------------------------------
     # Topic list
