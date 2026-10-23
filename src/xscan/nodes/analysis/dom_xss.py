@@ -196,7 +196,7 @@ ANGULAR_CSTI_PAYLOADS = [
 
 # When one of these matched, a generic jQuery selector match on the same code is
 # the same flow reported twice with a weaker payload.
-_ATTRIBUTE_SINK_IDS = {"jquery_attr", "set_attribute_url", "set_attribute_on"}
+_ATTRIBUTE_SINK_IDS = {"jquery_attr", "set_attribute_url", "set_attribute_on", "jQuery.attr", "setAttribute", "jQuery.html"}
 
 
 @dataclass
@@ -724,16 +724,31 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
         """
         Find all matching sources using combined registry system.
         First uses xss_knowledge (optimized), then enhances with registry patterns.
-        Returns only xss_knowledge sources for now (registry not yet integrated).
         """
         # Primary sources from xss_knowledge
-        sources = [s for s in xss_knowledge.sources if s.matches(code_line)]
+        sources: list[Any] = [s for s in xss_knowledge.sources if s.matches(code_line)]
         
         # Enhance with additional patterns from registry if needed
         if not sources:
             registry_sources = source_registry.find_matching(code_line)
-            # TODO: Convert registry sources to SourceEntry-like objects for now
-            sources.extend(registry_sources)  # type: ignore
+            # Wrap SourceDefinition objects to add .id attribute for compatibility
+            for src_def in registry_sources:
+                # Create a wrapper that looks like a SourceEntry
+                class SourceEntryWrapper:  # noqa: E701
+                    def __init__(self, definition: Any) -> None:
+                        self.id = definition.name
+                        self.label = definition.name
+                        self.pattern = "|".join(definition.patterns) if definition.patterns else ""
+                        self.input_type = str(definition.type)
+                        self.confidence = "high" if definition.confidence > 0.8 else "medium"
+                        self.framework = definition.framework
+                        self.notes = definition.description
+                        self._original = definition
+                    
+                    def matches(self, code: str) -> bool:
+                        return bool(self._original.matches(code))
+                
+                sources.append(SourceEntryWrapper(src_def))
         
         return sources
 
@@ -741,16 +756,37 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
         """
         Find all matching sinks using combined registry system.
         First uses xss_knowledge (optimized), then enhances with registry patterns.
-        Returns only xss_knowledge sinks for now (registry not yet integrated).
         """
         # Primary sinks from xss_knowledge
-        sinks = [s for s in xss_knowledge.sinks if s.matches(code_line)]
+        sinks: list[Any] = [s for s in xss_knowledge.sinks if s.matches(code_line)]
         
         # Enhance with additional patterns from registry if needed
         if not sinks:
             registry_sinks = sink_registry.find_matching(code_line)
-            # TODO: Convert registry sinks to SinkEntry-like objects for now
-            sinks.extend(registry_sinks)  # type: ignore
+            # Wrap SinkDefinition objects to add .id attribute for compatibility
+            for sink_def in registry_sinks:
+                # Create a wrapper that looks like a SinkEntry
+                class SinkEntryWrapper:  # noqa: E701
+                    def __init__(self, definition: Any) -> None:
+                        self.id = definition.name
+                        self.label = definition.name
+                        self.pattern = "|".join(definition.patterns) if definition.patterns else ""
+                        self.severity = 'high' if definition.confidence > 0.8 else 'medium'
+                        self.category = str(definition.type)
+                        self.requires_browser = definition.requires_browser
+                        self.framework = definition.framework
+                        self.notes = definition.description
+                        self.kind = ""  # Will be resolved by resolve_sink_context
+                        self.interaction = ""  # Will be resolved by resolve_sink_context
+                        # For resolve_sink_context fallback
+                        self.resolved_kind = 'html_text'
+                        self.resolved_interaction = 'none'
+                        self._original = definition
+                    
+                    def matches(self, code: str) -> bool:
+                        return bool(self._original.matches(code))
+                
+                sinks.append(SinkEntryWrapper(sink_def))
         
         return sinks
 
@@ -903,7 +939,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             if matched_sinks:
                 file_metrics.source_analysis.lines_with_sink_patterns += 1
                 for sink in matched_sinks:
-                    sink_id = sink.id
+                    sink_id = sink.id  # Both SinkEntry and SinkDefinition (after patching) have .id
                     file_metrics.source_analysis.sink_patterns_matched[sink_id] = (
                         file_metrics.source_analysis.sink_patterns_matched.get(sink_id, 0) + 1
                     )
@@ -911,7 +947,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             if _JQUERY_READY_RE.search(line):
                 matched_sinks = [
                     e for e in matched_sinks 
-                    if e.id != "jquery_dollar"
+                    if e.id not in ("jquery_dollar", "jQuery.html")  # Both old and new sink names
                 ]
             
             has_attribute_sink = any(
@@ -919,7 +955,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
             )
             
             for sink_entry in matched_sinks:
-                if has_attribute_sink and sink_entry.id == "jquery_dollar":
+                if has_attribute_sink and sink_entry.id in ("jquery_dollar", "jQuery.html"):
                     continue
 
                 sink_id = sink_entry.id
