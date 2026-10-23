@@ -164,8 +164,18 @@ class HelpEngine:
     # ------------------------------------------------------------------
 
     def _resolve_topic(self, raw: str) -> Optional[str]:
-        """Normalise and alias-expand a raw topic string."""
+        """Normalise and alias-expand a raw topic string, including numeric menu selection."""
         normalised = raw.lower().strip().replace(" ", "-")
+        
+        # Handle numeric menu selection (e.g., "1", "2", etc.)
+        if normalised.isdigit():
+            try:
+                menu_index = int(normalised) - 1  # Convert 1-based to 0-based
+                if 0 <= menu_index < len(GUIDED_MENU):
+                    return GUIDED_MENU[menu_index].get("topic")
+            except (ValueError, IndexError):
+                pass
+        
         if normalised in TOPICS:
             return normalised
         if normalised in TOPIC_ALIASES:
