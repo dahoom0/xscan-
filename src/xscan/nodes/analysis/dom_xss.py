@@ -773,7 +773,7 @@ class DomXssDetectorNode(NodeBase, NodeEmitter):
                         self.pattern = "|".join(definition.patterns) if definition.patterns else ""
                         self.severity = 'high' if definition.confidence > 0.8 else 'medium'
                         self.category = str(definition.type)
-                        self.requires_browser = definition.requires_browser
+                        self.requires_browser = definition.runtime_detectable  # Use runtime_detectable as proxy
                         self.framework = definition.framework
                         self.notes = definition.description
                         self.kind = ""  # Will be resolved by resolve_sink_context
